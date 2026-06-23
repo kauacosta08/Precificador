@@ -13,8 +13,8 @@ st.markdown("---")
 
 # 2. INTERFACE LATERAL
 st.sidebar.header("📋 Dados do Veículo Evaluado")
-modelo_buscado = st.sidebar.text_input("Marca / Modelo do Carro", placeholder="Ex: Mercedes GLC 300")
-ano_alvo = st.sidebar.number_input("Ano do Modelo", min_value=2000, max_value=2028, value=2023)
+modelo_buscado = st.sidebar.text_input("Marca / Modelo do Carro", placeholder="Ex: Toyota RAV4")
+ano_alvo = st.sidebar.number_input("Ano do Modelo", min_value=2000, max_value=2028, value=2025)
 km_alvo = st.sidebar.number_input("Quilometragem Atual", min_value=0, value=30000, step=1000)
 
 botao_analisar = st.sidebar.button("📊 Analisar Mercado Competitivo")
@@ -26,64 +26,59 @@ def converter_preco_fipe(valor_texto):
         return 0.0
     return float(apenas_numeros) / 100.0
 
-# 4. CONEXÃO COM FILTRO STRICT E CASAMENTO EXATO DE TERMOS
-def carregar_dados_mercado_v7(entrada_usuario, ano_desejado):
+# 4. CONEXÃO ULTRA-CALIBRADA
+def carregar_dados_mercado_v9(entrada_usuario, ano_desejado):
     try:
         entrada_clean = entrada_usuario.strip().lower()
         
-        # 1. Obter todas as marcas da FIPE
+        # 1. Marcas
         url_marcas = "https://parallelum.com.br/fipe/api/v1/carros/marcas"
         res_marcas = requests.get(url_marcas, timeout=5)
         if res_marcas.status_code != 200:
-            return {"erro": "Falha na conexão com o servidor da FIPE (Etapa: Marcas)."}
+            return {"erro": "Falha na conexão (Etapa: Marcas)."}
             
         marcas = res_marcas.json()
         marca_id = None
         termo_modelo = entrada_clean
         
-        # Identifica e remove a marca do texto de busca
         for m in marcas:
             nome_marca_fipe = m['nome'].lower()
             if nome_marca_fipe in entrada_clean or (len(entrada_clean) > 3 and entrada_clean in nome_marca_fipe):
                 marca_id = m['codigo']
-                termo_modelo = entrada_clean.replace(nome_marca_fipe, "").replace("mercedes-benz", "").replace("mercedes", "").strip()
+                termo_modelo = entrada_clean.replace(nome_marca_fipe, "").replace("toyota", "").replace("ford", "").strip()
                 break
                 
-        # Garante o código caso digitem variações da Mercedes
-        if not marca_id and ("mercedes" in entrada_clean or "glc" in entrada_clean):
-            marca_id = "33"
-            termo_modelo = entrada_clean.replace("mercedes-benz", "").replace("mercedes", "").strip()
+        if not marca_id:
+            if "toyota" in entrada_clean or "rav" in entrada_clean: marca_id = "70"
+            elif "ford" in entrada_clean or "territory" in entrada_clean: marca_id = "22"
 
         if not marca_id:
-            return {"erro": f"Não identificamos a Marca do veículo. Tente incluir o nome completo (Ex: Mercedes GLC 300)."}
+            return {"erro": "Não identificamos a Marca do veículo."}
 
-        # 2. Buscar todos os modelos da marca
+        # 2. Modelos
         url_modelos = f"https://parallelum.com.br/fipe/api/v1/carros/marcas/{marca_id}/modelos"
         res_mod = requests.get(url_modelos, timeout=5)
         if res_mod.status_code != 200:
-            return {"erro": "Falha na conexão com o servidor da FIPE (Etapa: Modelos)."}
+            return {"erro": "Falha na conexão (Etapa: Modelos)."}
             
         modelos_dados = res_mod.json().get('modelos', [])
         
-        # FILTRO CRÍTICO: O modelo deve conter TODAS as palavras digitadas pelo usuário
-        palavras_busca = [p for p in termo_modelo.split() if len(p) > 1] # ignora letras soltas
-        
+        # Filtro inteligente de palavras chaves principais (ignora termos curtos ou conectores)
+        palavras_busca = [p for p in termo_modelo.split() if len(p) > 2 and p != "1.5" and p != "2.5"]
+        if not palavras_busca: # Se sobrou nada, tenta usar o que tem
+            palavras_busca = termo_modelo.split()
+
         if palavras_busca:
-            # Só aceita modelos que contenham TODAS as palavras chaves (ex: 'glc' AND '300')
-            modelos_filtrados = [
-                m for m in modelos_dados 
-                if all(p in m['nome'].lower() for p in palavras_busca)
-            ]
+            modelos_filtrados = [m for m in modelos_dados if all(p in m['nome'].lower() for p in palavras_busca)]
         else:
             modelos_filtrados = modelos_dados
 
         if not modelos_filtrados:
-            return {"erro": f"Marca encontrada, mas nenhuma versão corresponde exatamente aos termos: {palavras_busca}"}
+            return {"erro": "Nenhum modelo corresponde aos termos digitados."}
 
-        # 3. Varre os modelos filtrados estritamente buscando o ano
-        dados_finais = None
-        ano_efetivo = ano_desejado
-        fallback_utilizado = False
+        # 3. Varredura Inteligente priorizando o Ano Alvo
+        candidato_perfeito = None
+        codigo_ano_perfeito = None
         
         for cand in modelos_filtrados:
             modelo_id = cand['codigo']
@@ -92,64 +87,86 @@ def carregar_dados_mercado_v7(entrada_usuario, ano_desejado):
             
             if res_anos.status_code == 200:
                 anos_lista = res_anos.json()
-                if not anos_lista: continue
-                
-                # Procura o ano alvo
                 codigo_ano_fipe = next((a['codigo'] for a in anos_lista if a['codigo'].startswith(str(ano_desejado))), None)
-                
-                # Se achou o carro com o termo correto E o ano correto, perfeito!
                 if codigo_ano_fipe:
-                    ano_efetivo = ano_desejado
-                    fallback_utilizado = False
-                else:
-                    # Se não tem o ano exato (ex: GLC 250 em 2023), pega o mais recente disponível DESTA versão estrita
-                    codigo_ano_fipe = anos_lista[0]['codigo']
-                    ano_efetivo = int(codigo_ano_fipe.split("-")[0])
-                    fallback_utilizado = True
-                
-                url_final = f"https://parallelum.com.br/fipe/api/v1/carros/marcas/{marca_id}/modelos/{modelo_id}/anos/{codigo_ano_fipe}"
-                res_final = requests.get(url_final, timeout=3)
-                if res_final.status_code == 200:
-                    dados_finais = res_final.json()
+                    candidato_perfeito = cand
+                    codigo_ano_perfeito = codigo_ano_fipe
                     break
+
+        dados_finais = None
+        ano_efetivo_txt = str(ano_desejado)
+        fallback_utilizado = False
+        
+        if candidato_perfeito and codigo_ano_perfeito:
+            modelo_id = candidato_perfeito['codigo']
+            url_final = f"https://parallelum.com.br/fipe/api/v1/carros/marcas/{marca_id}/modelos/{modelo_id}/anos/{codigo_ano_perfeito}"
+            res_final = requests.get(url_final, timeout=3)
+            if res_final.status_code == 200:
+                dados_finais = res_final.json()
+        else:
+            # Fallback se ninguém da lista tiver o ano exato
+            for cand in modelos_filtrados:
+                modelo_id = cand['codigo']
+                url_anos = f"https://parallelum.com.br/fipe/api/v1/carros/marcas/{marca_id}/modelos/{modelo_id}/anos"
+                res_anos = requests.get(url_anos, timeout=2)
+                if res_anos.status_code == 200 and res_anos.json():
+                    anos_lista = res_anos.json()
+                    codigo_ano_fipe = anos_lista[0]['codigo']
+                    
+                    # Correção FIPE 32000 (Zero KM)
+                    ano_cru = codigo_ano_fipe.split("-")[0]
+                    ano_efetivo_txt = "Zero KM" if ano_cru == "32000" else ano_cru
+                    fallback_utilizado = True
+                    
+                    url_final = f"https://parallelum.com.br/fipe/api/v1/carros/marcas/{marca_id}/modelos/{modelo_id}/anos/{codigo_ano_fipe}"
+                    res_final = requests.get(url_final, timeout=2)
+                    if res_final.status_code == 200:
+                        dados_finais = res_final.json()
+                        break
 
         if dados_finais:
             preco_base = converter_preco_fipe(dados_finais['Valor'])
             
+            # Se for Zero KM ou string, define um ano base fictício só pro gráfico não quebrar
+            ano_grafico = 2025 if ano_efetivo_txt == "Zero KM" else int(ano_efetivo_txt)
             df_historico = pd.DataFrame({
-                'Ano': [ano_efetivo - 1, ano_efetivo, ano_efetivo + 1],
+                'Ano': [ano_grafico - 1, ano_grafico, ano_grafico + 1],
                 'Preço Praticado': [preco_base * 1.05, preco_base, preco_base * 0.94]
             })
             
+            # Formata a exibição do ano final
+            ano_fipe_limpo = dados_finais.get('AnoModelo')
+            if ano_fipe_limpo == 32000:
+                ano_efetivo_txt = "Zero KM"
+                
             return {
                 'preco_barato': preco_base * 0.92,
                 'preco_mediano': preco_base,
                 'preco_caro': preco_base * 1.08,
                 'df_historico': df_historico,
                 'versao_oficial': dados_finais.get('Modelo', entrada_usuario.upper()),
-                'ano_real': ano_efetivo,
+                'ano_real': ano_efetivo_txt,
                 'fallback': fallback_utilizado,
                 'erro': None
             }
             
     except Exception as e:
         return {"erro": f"Erro de processamento: {str(e)}"}
-        
-    return {"erro": "Não foi possível encontrar uma versão condizente com a pesquisa."}
+    return {"erro": "Não foi possível encontrar uma versão condizente."}
 
 # 5. RENDERIZAÇÃO DA TELA
 if botao_analisar and modelo_buscado:
-    with st.spinner('Buscando dados exatos na FIPE...'):
-        resultado = carregar_dados_mercado_v7(modelo_buscado, ano_alvo)
+    with st.spinner('Acessando os servidores atualizados da FIPE...'):
+        resultado = carregar_dados_mercado_v9(modelo_buscado, ano_alvo)
         
     if resultado is None or resultado.get('erro'):
         st.error(f"❌ **Erro:** {resultado.get('erro', 'Veículo não localizado.')}")
     else:
         if resultado['fallback']:
-            st.warning(f"⚠️ **Nota:** Não há registro exato para o ano {ano_alvo}. Exibindo o ano mais próximo ({resultado['ano_real']}).")
+            st.warning(f"⚠️ **Nota:** Não há registro exato para o ano {ano_alvo}. Exibindo o ano disponível mais próximo ({resultado['ano_real']}).")
             
         st.subheader(f"🔍 {resultado['versao_oficial']}")
-        st.caption(f"Ano do modelo verificado: {resultado['ano_real']} | Tabela FIPE Oficial.")
+        st.caption(f"Ano/Modelo verificado: {resultado['ano_real']} | Tabela FIPE Oficial.")
         
         col1, col2, col3 = st.columns(3)
         col1.metric("📉 Limite Mínimo", f"R$ {resultado['preco_barato']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
